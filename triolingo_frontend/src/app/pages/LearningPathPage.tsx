@@ -1,35 +1,77 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { LearningPathForm } from '../components/LearningPathForm';
 import { LearningGraph } from '../components/LearningGraph';
-import { personalizeGraph } from '../api';
-import type { KnowledgeGraph } from '../api';
+import type { KnowledgeGraph } from '../types/assessment';
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
+type PathConfig = {
+  timeLimit: string;
+  experienceLevel: string;
+  motivation: string;
+};
+
+type RequestPayload = {
+  language: string;
+  goal: string;
+  timeline: string;
+  experience_level: string;
+};
+
+type PersonalizeResponse = {
+  graph: KnowledgeGraph;
+  user_id: string;
+  llm_system: string;
+  llm_prompt: string;
+  llm_response: string;
+};
 
 export function LearningPathPage() {
-  const [graph, setGraph] = useState<KnowledgeGraph | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const [pathConfig, setPathConfig] = useState<PathConfig | null>(null);
+  const [requestPayload, setRequestPayload] = useState<RequestPayload | null>(null);
+  const [llmRequest, setLlmRequest] = useState<{ system: string; prompt: string; response: string; graph: PersonalizeResponse['graph']; userId: string } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [subtitle, setSubtitle] = useState('');
 
-  const handleSubmit = async (config: { timeLimit: string; experienceLevel: string; motivation: string }) => {
-    setLoading(true);
+  const handleSubmit = async (config: PathConfig) => {
+    setIsSubmitting(true);
     setError(null);
-    setGraph(null);
+    setLlmRequest(null);
+
+    const payload: RequestPayload = {
+      language: 'Spanish',
+      goal: config.motivation,
+      timeline: config.timeLimit,
+      experience_level: config.experienceLevel,
+    };
+    setRequestPayload(payload);
 
     try {
-      const result = await personalizeGraph({
-        language: 'spanish',
-        goal: config.motivation,
-        timeline: config.timeLimit,
-        experience_level: config.experienceLevel,
+      const response = await fetch(`${API_BASE_URL}/personalize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
-      setGraph(result.graph);
-      setSubtitle(`${getTimeLabel(config.timeLimit)} · ${getMotivationLabel(config.motivation)}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setError(`Personalization failed: ${msg}. Make sure the backend is running and HF_TOKEN is set.`);
+      if (!response.ok) {
+        throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+      }
+      const data: PersonalizeResponse = await response.json();
+      sessionStorage.setItem('triolingo_user_id', data.user_id);
+      sessionStorage.setItem('triolingo_graph', JSON.stringify(data.graph));
+      setLlmRequest({
+        system: data.llm_system,
+        prompt: data.llm_prompt,
+        response: data.llm_response,
+        graph: data.graph,
+        userId: data.user_id,
+      });
+      setPathConfig(config);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to submit form');
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -46,7 +88,7 @@ export function LearningPathPage() {
         </div>
 
         <div className="lg:col-span-2">
-          {loading ? (
+          {isSubmitting ? (
             <div className="border border-gray-800 rounded-lg bg-gray-900/30 p-12 flex flex-col items-center justify-center min-h-[600px] gap-4">
               <div className="w-8 h-8 border-2 border-gray-600 border-t-emerald-400 rounded-full animate-spin" />
               <p className="text-gray-400 text-sm">Personalizing your learning path...</p>
@@ -55,8 +97,33 @@ export function LearningPathPage() {
             <div className="border border-red-800 rounded-lg bg-red-900/20 p-12 flex items-center justify-center min-h-[600px]">
               <p className="text-red-400 text-center text-sm">{error}</p>
             </div>
-          ) : graph ? (
-            <LearningGraph graph={graph} subtitle={subtitle} />
+          ) : pathConfig ? (
+            <>
+              <LearningGraph
+                config={pathConfig}
+                graph={llmRequest?.graph}
+                onNodeClick={llmRequest ? (nodeId) => navigate(`/lesson/${encodeURIComponent(nodeId)}`) : undefined}
+              />
+              {llmRequest && (
+                <>
+                  <RequestPanel
+                    title="LLM request (profile + knowledge graph)"
+                    subtitle="What the backend sent to the model"
+                    body={`SYSTEM:\n${llmRequest.system}\n\nPROMPT:\n${llmRequest.prompt}`}
+                  />
+                  <RequestPanel
+                    title="LLM response (subgraph selection)"
+                    subtitle="Node IDs the model chose to keep & mark known"
+                    body={llmRequest.response}
+                  />
+                  <RequestPanel
+                    title="Resulting subgraph"
+                    subtitle={`${llmRequest.graph.nodes.length} nodes, ${llmRequest.graph.edges.length} edges sliced from the base graph`}
+                    body={JSON.stringify(llmRequest.graph, null, 2)}
+                  />
+                </>
+              )}
+            </>
           ) : (
             <div className="border border-gray-800 rounded-lg bg-gray-900/30 p-12 flex items-center justify-center min-h-[600px]">
               <p className="text-gray-500 text-center">
@@ -70,24 +137,16 @@ export function LearningPathPage() {
   );
 }
 
-function getTimeLabel(timeLimit: string): string {
-  const labels: Record<string, string> = {
-    '3months': '3-month intensive track',
-    '6months': '6-month moderate pace',
-    '1year': '1-year comfortable pace',
-    '2years': '2-year relaxed pace',
-  };
-  return labels[timeLimit] ?? timeLimit;
-}
-
-function getMotivationLabel(motivation: string): string {
-  const labels: Record<string, string> = {
-    travel: 'Travel & Tourism focus',
-    work: 'Professional/Business focus',
-    academic: 'Academic Studies focus',
-    cultural: 'Cultural Exploration focus',
-    family: 'Family & Relationships focus',
-    immigration: 'Immigration/Relocation focus',
-  };
-  return labels[motivation] ?? motivation;
+function RequestPanel({ title, subtitle, body }: { title: string; subtitle: string; body: string }) {
+  return (
+    <details className="border border-gray-800 rounded-lg bg-gray-900/30 p-4 group" open>
+      <summary className="cursor-pointer select-none">
+        <span className="text-white font-medium">{title}</span>
+        <p className="text-xs text-gray-500 mt-1">{subtitle}</p>
+      </summary>
+      <pre className="mt-3 p-3 bg-black border border-gray-800 rounded text-xs text-[#39ff14] overflow-auto max-h-96 whitespace-pre-wrap break-words">
+        {body}
+      </pre>
+    </details>
+  );
 }

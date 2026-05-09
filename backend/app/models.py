@@ -31,6 +31,7 @@ class KnowledgeGraph(BaseModel):
 
 class PersonalizeResponse(BaseModel):
     graph: KnowledgeGraph
+    user_id: str
     llm_system: str
     llm_prompt: str
     llm_response: str
