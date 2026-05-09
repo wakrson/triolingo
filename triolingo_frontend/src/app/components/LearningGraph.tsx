@@ -187,7 +187,7 @@ export function LearningGraph({ config }: LearningGraphProps) {
     setError(null);
     setGraph(null);
 
-    fetch(`backend`, {
+    fetch(`backend/personalize`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(configToProfile(config)),
