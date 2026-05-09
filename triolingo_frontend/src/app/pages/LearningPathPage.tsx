@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { LearningPathForm } from '../components/LearningPathForm';
 import { LearningGraph } from '../components/LearningGraph';
 import type { KnowledgeGraph } from '../types/assessment';
@@ -20,15 +21,17 @@ type RequestPayload = {
 
 type PersonalizeResponse = {
   graph: KnowledgeGraph;
+  user_id: string;
   llm_system: string;
   llm_prompt: string;
   llm_response: string;
 };
 
 export function LearningPathPage() {
+  const navigate = useNavigate();
   const [pathConfig, setPathConfig] = useState<PathConfig | null>(null);
   const [requestPayload, setRequestPayload] = useState<RequestPayload | null>(null);
-  const [llmRequest, setLlmRequest] = useState<{ system: string; prompt: string; response: string; graph: PersonalizeResponse['graph'] } | null>(null);
+  const [llmRequest, setLlmRequest] = useState<{ system: string; prompt: string; response: string; graph: PersonalizeResponse['graph']; userId: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,11 +58,14 @@ export function LearningPathPage() {
         throw new Error(`Request failed: ${response.status} ${response.statusText}`);
       }
       const data: PersonalizeResponse = await response.json();
+      sessionStorage.setItem('triolingo_user_id', data.user_id);
+      sessionStorage.setItem('triolingo_graph', JSON.stringify(data.graph));
       setLlmRequest({
         system: data.llm_system,
         prompt: data.llm_prompt,
         response: data.llm_response,
         graph: data.graph,
+        userId: data.user_id,
       });
       setPathConfig(config);
     } catch (e) {
@@ -100,7 +106,11 @@ export function LearningPathPage() {
             </div>
           ) : pathConfig ? (
             <>
-              <LearningGraph config={pathConfig} graph={llmRequest?.graph} />
+              <LearningGraph
+                config={pathConfig}
+                graph={llmRequest?.graph}
+                onNodeClick={llmRequest ? (nodeId) => navigate(`/lesson/${encodeURIComponent(nodeId)}`) : undefined}
+              />
               {llmRequest && (
                 <>
                   <RequestPanel
