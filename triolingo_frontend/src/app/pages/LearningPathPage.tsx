@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { LearningPathForm } from '../components/LearningPathForm';
 import { LearningGraph } from '../components/LearningGraph';
+import type { KnowledgeGraph } from '../types/assessment';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -18,7 +19,7 @@ type RequestPayload = {
 };
 
 type PersonalizeResponse = {
-  graph: { nodes: unknown[]; edges: unknown[] };
+  graph: KnowledgeGraph;
   llm_system: string;
   llm_prompt: string;
   llm_response: string;
@@ -99,7 +100,7 @@ export function LearningPathPage() {
             </div>
           ) : pathConfig ? (
             <>
-              <LearningGraph config={pathConfig} />
+              <LearningGraph config={pathConfig} graph={llmRequest?.graph} />
               {llmRequest && (
                 <>
                   <RequestPanel

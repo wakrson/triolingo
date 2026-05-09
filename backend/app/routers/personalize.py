@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import networkx as nx
 from fastapi import APIRouter, HTTPException
@@ -32,26 +33,38 @@ def build_personalize_prompt(profile: UserProfile, base: KnowledgeGraph) -> tupl
         '- Mark as "known" the nodes a learner at the given experience level has already mastered.'
     )
 
+    slim_nodes = [{"id": n.id, "label": n.label, "type": n.type} for n in base.nodes]
+    slim_edges = [{"source": e.source, "target": e.target} for e in base.edges]
+    slim_graph = {"nodes": slim_nodes, "edges": slim_edges}
+
     prompt = (
         f"Learner profile:\n"
         f"- Language: {profile.language}\n"
         f"- Goal: {profile.goal}\n"
         f"- Timeline: {profile.timeline}\n"
         f"- Experience: {profile.experience_level}\n\n"
-        f"Base knowledge graph:\n{base.model_dump_json(indent=2)}"
+        f"Base knowledge graph:\n{json.dumps(slim_graph)}"
     )
 
     return system, prompt
 
 
+_TRAILING_COMMA_RE = re.compile(r",(\s*[\]}])")
+
+
 def parse_llm_selection(raw: str) -> tuple[list[str], list[str]]:
     cleaned = raw.strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0]
-    elif cleaned.startswith("```json"):
-        cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0]
+        cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
-    data = json.loads(cleaned)
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError("no JSON object found in LLM response")
+    candidate = cleaned[start : end + 1]
+    candidate = _TRAILING_COMMA_RE.sub(r"\1", candidate)
+
+    data = json.loads(candidate)
     keep = list(data.get("keep", []))
     known = list(data.get("known", []))
     return keep, known
@@ -91,13 +104,24 @@ def personalize(profile: UserProfile):
 
     logger.info("=== /personalize LLM request ===\nSYSTEM:\n%s\n\nPROMPT:\n%s\n=== end ===", system, prompt)
 
-    raw = call_llm(system, prompt)
-    logger.info("=== /personalize LLM response ===\n%s\n=== end ===", raw)
-
-    try:
-        keep_ids, known_ids = parse_llm_selection(raw)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(status_code=502, detail=f"LLM returned malformed JSON: {e}") from e
+    raw = ""
+    keep_ids: list[str] = []
+    known_ids: list[str] = []
+    last_error: Exception | None = None
+    for attempt in range(3):
+        raw = call_llm(system, prompt, json_mode=True)
+        logger.info("=== /personalize LLM response (attempt %d) ===\n%s\n=== end ===", attempt + 1, raw)
+        try:
+            keep_ids, known_ids = parse_llm_selection(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            continue
+        if keep_ids:
+            break
+    else:
+        if last_error is not None:
+            raise HTTPException(status_code=502, detail=f"LLM returned malformed JSON: {last_error}") from last_error
+        raise HTTPException(status_code=502, detail="LLM returned an empty selection after 3 attempts")
 
     personalized = extract_subgraph(base, keep_ids, known_ids)
     logger.info(
@@ -112,4 +136,4 @@ def personalize(profile: UserProfile):
     set_user_graph(user_id, personalized)
     set_user_profile(user_id, profile)
 
-    return PersonalizeResponse(graph=personalized, llm_system=system, llm_prompt=prompt, llm_response=raw)
+    return PersonalizeResponse(graph=personalized, user_id=user_id, llm_system=system, llm_prompt=prompt, llm_response=raw)

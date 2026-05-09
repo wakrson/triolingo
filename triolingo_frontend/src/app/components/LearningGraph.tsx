@@ -1,5 +1,6 @@
 import { CheckCircle2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { useMemo, useState, useRef, useCallback } from 'react';
+import type { KnowledgeGraph } from '../types/assessment';
 
 interface LearningGraphProps {
   config: {
@@ -7,6 +8,8 @@ interface LearningGraphProps {
     experienceLevel: string;
     motivation: string;
   };
+  graph?: KnowledgeGraph;
+  onNodeClick?: (nodeId: string) => void;
 }
 
 interface Node {
@@ -16,11 +19,92 @@ interface Node {
   level: number;
   position: number;
   color: string;
+  status?: 'known' | 'weak' | 'unknown';
 }
 
 interface Edge {
   from: string;
   to: string;
+}
+
+const TYPE_COLORS: Record<string, string> = {
+  grammar: '#39ff14',
+  vocabulary: '#ffffff',
+  conversational: '#2ee010',
+  skill: '#2ee010',
+  topic: '#60ff60',
+  concept: '#39ff14',
+  cultural: '#60ff60',
+};
+const DEFAULT_TYPE_COLOR = '#39ff14';
+const KNOWN_COLOR = '#4b5563';
+
+function colorForNode(type: string, status?: string): string {
+  if (status === 'known') return KNOWN_COLOR;
+  return TYPE_COLORS[type?.toLowerCase()] ?? DEFAULT_TYPE_COLOR;
+}
+
+function layoutFromGraph(graph: KnowledgeGraph): { nodes: Node[]; edges: Edge[] } {
+  const nodeIds = graph.nodes.map(n => n.id);
+  const idSet = new Set(nodeIds);
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const id of nodeIds) {
+    incoming.set(id, []);
+    outgoing.set(id, []);
+  }
+  for (const e of graph.edges) {
+    if (!idSet.has(e.source) || !idSet.has(e.target)) continue;
+    incoming.get(e.target)!.push(e.source);
+    outgoing.get(e.source)!.push(e.target);
+  }
+
+  // Topological-ish level assignment: roots (no incoming) at level 0,
+  // each node's level = 1 + max(level(parents)). Cycles fall back to difficulty.
+  const level = new Map<string, number>();
+  const visiting = new Set<string>();
+  const computeLevel = (id: string): number => {
+    if (level.has(id)) return level.get(id)!;
+    if (visiting.has(id)) {
+      const node = graph.nodes.find(n => n.id === id);
+      return node ? Math.max(0, node.difficulty - 1) : 0;
+    }
+    visiting.add(id);
+    const parents = incoming.get(id) ?? [];
+    const lvl = parents.length === 0 ? 0 : Math.max(...parents.map(computeLevel)) + 1;
+    visiting.delete(id);
+    level.set(id, lvl);
+    return lvl;
+  };
+  for (const id of nodeIds) computeLevel(id);
+
+  // Group by level, then sort within level by id for stable positions.
+  const byLevel = new Map<number, string[]>();
+  for (const id of nodeIds) {
+    const lvl = level.get(id)!;
+    if (!byLevel.has(lvl)) byLevel.set(lvl, []);
+    byLevel.get(lvl)!.push(id);
+  }
+  for (const ids of byLevel.values()) ids.sort();
+
+  const position = new Map<string, number>();
+  for (const ids of byLevel.values()) {
+    ids.forEach((id, idx) => position.set(id, idx));
+  }
+
+  const nodes: Node[] = graph.nodes.map(n => ({
+    id: n.id,
+    label: n.label,
+    description: n.tags.length > 0 ? n.tags.join(' · ') : n.type,
+    level: level.get(n.id) ?? 0,
+    position: position.get(n.id) ?? 0,
+    color: colorForNode(n.type, n.status),
+    status: n.status,
+  }));
+  const edges: Edge[] = graph.edges
+    .filter(e => idSet.has(e.source) && idSet.has(e.target))
+    .map(e => ({ from: e.source, to: e.target }));
+  return { nodes, edges };
 }
 
 const LEVEL_SPACING = 220;
@@ -36,7 +120,7 @@ function getNodeCoords(node: Node) {
   };
 }
 
-export function LearningGraph({ config }: LearningGraphProps) {
+export function LearningGraph({ config, graph, onNodeClick }: LearningGraphProps) {
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
 
   // Zoom/pan state
@@ -46,7 +130,10 @@ export function LearningGraph({ config }: LearningGraphProps) {
   const lastMouse = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const { nodes, edges } = useMemo(() => generateLearningPath(config), [config]);
+  const { nodes, edges } = useMemo(() => {
+    if (graph && graph.nodes.length > 0) return layoutFromGraph(graph);
+    return generateLearningPath(config);
+  }, [graph, config]);
 
   // Compute SVG canvas size based on node positions
   const canvasWidth = useMemo(() => {
@@ -208,9 +295,11 @@ export function LearningGraph({ config }: LearningGraphProps) {
                   top: y,
                   transform: 'translate(-50%, -50%)',
                   zIndex: isHovered ? 50 : 10,
+                  cursor: onNodeClick ? 'pointer' : undefined,
                 }}
                 onMouseEnter={() => setHoveredNode(node.id)}
                 onMouseLeave={() => setHoveredNode(null)}
+                onClick={onNodeClick ? () => onNodeClick(node.id) : undefined}
               >
                 {isHovered ? (
                   <div
@@ -229,6 +318,16 @@ export function LearningGraph({ config }: LearningGraphProps) {
                       <h3 className="font-medium text-sm leading-tight text-white">{node.label}</h3>
                     </div>
                     <p className="text-xs text-gray-400 leading-relaxed">{node.description}</p>
+                    {node.status && (
+                      <p className="text-[10px] uppercase tracking-wider mt-2" style={{ color: node.color }}>
+                        {node.status}
+                      </p>
+                    )}
+                    {onNodeClick && (
+                      <p className="text-[11px] mt-3 pt-2 border-t border-gray-800" style={{ color: node.color }}>
+                        Click to start lesson →
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <div
