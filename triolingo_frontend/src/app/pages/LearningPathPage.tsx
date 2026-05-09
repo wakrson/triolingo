@@ -83,26 +83,19 @@ export function LearningPathPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 space-y-6">
-          <LearningPathForm onSubmit={handleSubmit} isSubmitting={isSubmitting} />
-
-          {requestPayload && (
-            <RequestPanel
-              title="Request → POST /personalize"
-              subtitle="JSON body sent from frontend to backend"
-              body={JSON.stringify(requestPayload, null, 2)}
-            />
-          )}
+        <div className="lg:col-span-1">
+          <LearningPathForm onSubmit={handleSubmit} />
         </div>
 
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2">
           {isSubmitting ? (
-            <div className="border border-gray-800 rounded-lg bg-gray-900/30 p-12 flex items-center justify-center min-h-[600px]">
-              <p className="text-gray-400 text-center">Generating your personalized path...</p>
+            <div className="border border-gray-800 rounded-lg bg-gray-900/30 p-12 flex flex-col items-center justify-center min-h-[600px] gap-4">
+              <div className="w-8 h-8 border-2 border-gray-600 border-t-emerald-400 rounded-full animate-spin" />
+              <p className="text-gray-400 text-sm">Personalizing your learning path...</p>
             </div>
           ) : error ? (
-            <div className="border border-red-900 rounded-lg bg-red-950/30 p-12 flex items-center justify-center min-h-[600px]">
-              <p className="text-red-400 text-center">{error}</p>
+            <div className="border border-red-800 rounded-lg bg-red-900/20 p-12 flex items-center justify-center min-h-[600px]">
+              <p className="text-red-400 text-center text-sm">{error}</p>
             </div>
           ) : pathConfig ? (
             <>
@@ -115,12 +108,12 @@ export function LearningPathPage() {
                 <>
                   <RequestPanel
                     title="LLM request (profile + knowledge graph)"
-                    subtitle="What the backend sent to Gemini"
+                    subtitle="What the backend sent to the model"
                     body={`SYSTEM:\n${llmRequest.system}\n\nPROMPT:\n${llmRequest.prompt}`}
                   />
                   <RequestPanel
                     title="LLM response (subgraph selection)"
-                    subtitle="Node IDs Gemini chose to keep & mark known"
+                    subtitle="Node IDs the model chose to keep & mark known"
                     body={llmRequest.response}
                   />
                   <RequestPanel
